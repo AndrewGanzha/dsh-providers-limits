@@ -1,5 +1,5 @@
 {
-  "name": "dsh-provider-limits",
+  "name": "dsh-providers-limits",
   "version": "1.0.0",
   "description": "Shows AI provider subscription limits (5h / weekly / monthly) in the DeepSeek Harness composer dock",
   "type": "module",
@@ -19,12 +19,12 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/OWNER/dsh-provider-limits.git"
+    "url": "https://github.com/AndrewGanzha/dsh-providers-limits.git"
   },
   "bugs": {
-    "url": "https://github.com/OWNER/dsh-provider-limits/issues"
+    "url": "https://github.com/AndrewGanzha/dsh-providers-limits/issues"
   },
-  "homepage": "https://github.com/OWNER/dsh-provider-limits#readme",
+  "homepage": "https://github.com/AndrewGanzha/dsh-providers-limits#readme",
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

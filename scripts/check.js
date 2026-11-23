@@ -8,7 +8,7 @@ const payload = await collect(true)
 if (asJson) {
   console.log(JSON.stringify(payload, null, 2))
 } else {
-  console.log(`opencode-limits · ${payload.configPath}`)
+  console.log(`provider limits · ${payload.configPath}`)
   if (payload.configError) console.log(`config error: ${payload.configError}`)
   console.log(`обновлено ${new Date(payload.updatedAt).toLocaleString()}\n`)
   for (const provider of payload.providers) {

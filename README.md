@@ -1,6 +1,6 @@
-# dsh-provider-limits
+# dsh-providers-limits
 
-[![CI](https://github.com/OWNER/dsh-provider-limits/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/dsh-provider-limits/actions/workflows/ci.yml)
+[![CI](https://github.com/AndrewGanzha/dsh-providers-limits/actions/workflows/ci.yml/badge.svg)](https://github.com/AndrewGanzha/dsh-providers-limits/actions/workflows/ci.yml)
 
 A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin that
 shows the subscription limits of your AI providers — the 5-hour, weekly and
@@ -30,7 +30,7 @@ OpenCode Go 5h 2% wk 1% mo 0%    Z.AI GLM ✕
 1. Get the code:
 
    ```bash
-   git clone https://github.com/OWNER/dsh-provider-limits.git
+   git clone https://github.com/AndrewGanzha/dsh-providers-limits.git
    ```
 
 2. In DeepSeek Harness open **Plugins → Add plugin** and pick the cloned
