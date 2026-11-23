@@ -15,7 +15,11 @@ OpenCode Go 5h 2% wk 1% mo 0%    Z.AI GLM ✕
 - one compact line under the composer, refreshed every minute;
 - **click it** to open a details panel: every window, a progress bar, the exact
   reset time and a countdown, plus provider errors and the config path;
-- the provider list is a plain JSON file you edit yourself;
+- **add a provider from the panel** — the `+ Добавить` button lists the known
+  presets (showing whether their key is reachable) and accepts a custom JSON
+  entry; `×` removes a provider (a second click confirms);
+- the provider list is a plain JSON file you edit yourself, and the panel writes
+  to the same file — no separate state;
 - one broken provider never hides the others: it just shows `✕` (the reason is
   in the details panel);
 - credentials stay on your machine: the Host half calls the providers, the
@@ -55,6 +59,22 @@ up — no restart.
 ```
 
 `enabled: false` keeps a provider in the file without polling it.
+
+### Add a provider from the panel
+
+Click the limits line → **+ Добавить**:
+
+- pick a preset — the plugin shows `ключ найден` / `ключ не найден` so you know
+  whether the credential is already reachable, and appends the entry;
+- or paste a custom provider JSON (the template is pre-filled) — the Host
+  validates it, writes the file atomically and refreshes the data.
+
+Nothing is stored twice: the form edits `~/.dsh/provider-limits.json` directly,
+so hand edits and panel edits are the same thing. Invalid input comes back as a
+readable message instead of a broken config; an unparsable file is never
+overwritten.
+
+`×` next to a provider removes it after a confirming second click.
 
 ### Presets
 

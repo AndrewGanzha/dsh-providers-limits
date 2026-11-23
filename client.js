@@ -20,10 +20,31 @@ window.__ModuleLoader__.load({
     const WARN = '#f59e0b'
     const BAD = '#ef4444'
 
+    const CUSTOM_TEMPLATE = JSON.stringify(
+      {
+        id: 'my-provider',
+        label: 'My provider',
+        url: 'https://api.example.com/usage',
+        auth: { from: 'env', name: 'MY_PROVIDER_API_KEY' },
+        windows: [{ label: '5h', percentPath: 'usage.percent', resetPath: 'usage.resetsAt' }],
+      },
+      null,
+      2,
+    )
+
     // ---------------------------------------------------------------------
     // Shared store: the dock renders the summary, the overlay renders details.
     // ---------------------------------------------------------------------
-    let state = { open: false, status: 'loading', data: null, error: null, refreshing: false }
+    let state = {
+      open: false,
+      view: 'details',
+      status: 'loading',
+      data: null,
+      error: null,
+      refreshing: false,
+      busy: false,
+      formError: null,
+    }
     const listeners = new Set()
 
     function setState(patch) {
@@ -59,6 +80,44 @@ window.__ModuleLoader__.load({
       } finally {
         inFlight = false
       }
+    }
+
+    async function postJson(body) {
+      try {
+        const response = await fetch(new URL(ROUTE, document.baseURI), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', accept: 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body),
+        })
+        const data = await response.json().catch(() => ({}))
+        if (!response.ok) return { error: data?.error ?? `HTTP ${response.status}` }
+        return { ok: true }
+      } catch (error) {
+        return { error: String(error?.message ?? error) }
+      }
+    }
+
+    async function addProvider(provider) {
+      setState({ busy: true, formError: null })
+      const result = await postJson({ action: 'add', provider })
+      if (result.error) {
+        setState({ busy: false, formError: result.error })
+        return
+      }
+      setState({ busy: false, view: 'details', formError: null })
+      await load(true)
+    }
+
+    async function removeProvider(id) {
+      setState({ busy: true, formError: null })
+      const result = await postJson({ action: 'remove', id })
+      if (result.error) {
+        setState({ busy: false, formError: result.error })
+        return
+      }
+      setState({ busy: false })
+      await load(true)
     }
 
     // ---------------------------------------------------------------------
@@ -126,6 +185,8 @@ window.__ModuleLoader__.load({
       )
     }
 
+    const buttonStyle = { padding: '4px 12px', borderRadius: 6, cursor: 'pointer' }
+
     // ---------------------------------------------------------------------
     // Dock: one compact line, click opens details
     // ---------------------------------------------------------------------
@@ -157,7 +218,7 @@ window.__ModuleLoader__.load({
       const providers = snapshot.data?.providers ?? []
       const visible = providers.filter((provider) => provider.windows.length > 0 || provider.error)
       const open = () => {
-        setState({ open: true })
+        setState({ open: true, view: 'details' })
         void load(true)
       }
 
@@ -177,7 +238,7 @@ window.__ModuleLoader__.load({
             title: snapshot.data?.configPath ?? '',
             onClick: open,
           },
-          'Лимиты: нет провайдеров',
+          'Лимиты: нет провайдеров · + добавить',
         )
       }
       return h(
@@ -195,7 +256,7 @@ window.__ModuleLoader__.load({
     }
 
     // ---------------------------------------------------------------------
-    // Overlay: details
+    // Overlay: details and the add-provider form
     // ---------------------------------------------------------------------
     function WindowRow({ window }) {
       const color = colorFor(window)
@@ -235,20 +296,142 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function ProviderRow({ provider }) {
+    function ProviderRow({ provider, onRemove }) {
+      const [confirming, setConfirming] = React.useState(false)
+      const removeButton = h(
+        'button',
+        {
+          type: 'button',
+          title: confirming ? 'Нажмите ещё раз, чтобы удалить' : 'Удалить провайдера',
+          onClick: () => (confirming ? onRemove(provider.id) : setConfirming(true)),
+          style: {
+            marginLeft: 'auto',
+            alignSelf: 'flex-start',
+            border: 'none',
+            background: 'transparent',
+            color: confirming ? BAD : 'inherit',
+            opacity: confirming ? 1 : 0.45,
+            cursor: 'pointer',
+            fontSize: 11,
+            padding: '0 2px',
+          },
+        },
+        confirming ? 'удалить?' : '×',
+      )
+
       if (provider.error) {
         return h(
           'div',
           { style: { padding: '6px 0', borderTop: '1px solid rgba(127,127,127,0.25)' } },
-          h('div', { style: { color: BAD, fontSize: 12 } }, `${provider.label}: ошибка`),
+          h(
+            'div',
+            { style: { display: 'flex', alignItems: 'baseline', gap: 6 } },
+            h('div', { style: { color: BAD, fontSize: 12 } }, `${provider.label}: ошибка`),
+            removeButton,
+          ),
           h('div', { style: { opacity: 0.75, fontSize: 11, marginTop: 2, lineHeight: '15px' } }, provider.error),
         )
       }
       return h(
         'div',
         { style: { padding: '6px 0', borderTop: '1px solid rgba(127,127,127,0.25)' } },
-        h('div', { style: { fontSize: 12, marginBottom: 2 } }, provider.label),
+        h(
+          'div',
+          { style: { display: 'flex', alignItems: 'baseline', gap: 6, marginBottom: 2 } },
+          h('div', { style: { fontSize: 12 } }, provider.label),
+          removeButton,
+        ),
         provider.windows.map((window) => h(WindowRow, { key: window.label, window })),
+      )
+    }
+
+    function PresetButton({ preset, busy, onPick }) {
+      const missing = !preset.keyAvailable
+      return h(
+        'button',
+        {
+          type: 'button',
+          disabled: busy,
+          onClick: () => onPick(preset.id),
+          title: missing ? `Ключ не найден: ${preset.keySource ?? 'не задан'}` : 'Добавить с текущим ключом',
+          style: {
+            ...buttonStyle,
+            display: 'flex',
+            alignItems: 'baseline',
+            gap: 6,
+            width: '100%',
+            textAlign: 'left',
+            marginBottom: 4,
+          },
+        },
+        h('span', null, preset.label),
+        h(
+          'span',
+          { style: { marginLeft: 'auto', fontSize: 10, color: missing ? WARN : OK } },
+          missing ? 'ключ не найден' : 'ключ найден',
+        ),
+      )
+    }
+
+    function AddForm({ snapshot }) {
+      const textarea = React.useRef(null)
+      const presets = (snapshot.data?.presets ?? []).filter((preset) => !preset.configured)
+      const busy = snapshot.busy
+
+      return h(
+        'div',
+        { style: { display: 'flex', flexDirection: 'column', gap: 6 } },
+        h('div', { style: { fontSize: 12, fontWeight: 600 } }, 'Добавить провайдера'),
+        presets.length === 0
+          ? h('div', { style: { opacity: 0.6, fontSize: 11 } }, 'Все известные пресеты уже добавлены.')
+          : presets.map((preset) =>
+              h(PresetButton, {
+                key: preset.id,
+                preset,
+                busy,
+                onPick: (id) => addProvider({ id, preset: id }),
+              }),
+            ),
+        h('div', { style: { fontSize: 11, opacity: 0.6, marginTop: 6 } }, 'Свой провайдер (JSON):'),
+        h('textarea', {
+          ref: textarea,
+          defaultValue: CUSTOM_TEMPLATE,
+          spellCheck: false,
+          rows: 8,
+          style: {
+            width: '100%',
+            boxSizing: 'border-box',
+            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+            fontSize: 11,
+            lineHeight: '15px',
+            borderRadius: 6,
+            padding: 8,
+            resize: 'vertical',
+          },
+        }),
+        h(
+          'button',
+          {
+            type: 'button',
+            disabled: busy,
+            onClick: () => {
+              const raw = textarea.current?.value ?? ''
+              let parsed
+              try {
+                parsed = JSON.parse(raw)
+              } catch (error) {
+                setState({ formError: `JSON не парсится: ${error?.message ?? error}` })
+                return
+              }
+              void addProvider(parsed)
+            },
+            style: { ...buttonStyle, alignSelf: 'flex-start' },
+          },
+          busy ? 'Добавляю…' : 'Добавить свой',
+        ),
+        snapshot.formError
+          ? h('div', { style: { color: BAD, fontSize: 11, lineHeight: '15px', wordBreak: 'break-word' } }, snapshot.formError)
+          : null,
       )
     }
 
@@ -256,10 +439,11 @@ window.__ModuleLoader__.load({
       const snapshot = useStore()
       if (!snapshot.open) return null
 
-      const close = () => setState({ open: false })
+      const close = () => setState({ open: false, view: 'details', formError: null })
       const data = snapshot.data
       const providers = data?.providers ?? []
       const updated = data?.updatedAt ? new Date(data.updatedAt).toLocaleTimeString() : '—'
+      const adding = snapshot.view === 'add'
 
       const body = h(
         'div',
@@ -274,58 +458,71 @@ window.__ModuleLoader__.load({
             gap: 2,
           },
         },
-        snapshot.status === 'error'
-          ? h('div', { style: { color: BAD, fontSize: 12 } }, `Не удалось получить лимиты: ${snapshot.error}`)
-          : null,
-        snapshot.data?.configError
-          ? h('div', { style: { color: BAD, fontSize: 12 } }, snapshot.data.configError)
-          : null,
-        providers.length === 0
-          ? h('div', { style: { opacity: 0.75, fontSize: 12 } }, 'Нет провайдеров в конфиге.')
-          : providers.map((provider) => h(ProviderRow, { key: provider.id, provider })),
-        h(
-          'div',
-          {
-            style: {
-              marginTop: 10,
-              fontSize: 10,
-              lineHeight: '14px',
-              opacity: 0.6,
-              wordBreak: 'break-all',
-            },
-          },
-          `Обновлено ${updated}${snapshot.refreshing ? ' · обновляю…' : ''}`,
-          h('br'),
-          `Конфиг: ${data?.configPath ?? '—'}`,
-        ),
+        adding
+          ? h(AddForm, { snapshot })
+          : h(
+              'div',
+              { style: { display: 'flex', flexDirection: 'column' } },
+              snapshot.status === 'error'
+                ? h('div', { style: { color: BAD, fontSize: 12 } }, `Не удалось получить лимиты: ${snapshot.error}`)
+                : null,
+              snapshot.data?.configError
+                ? h('div', { style: { color: BAD, fontSize: 12 } }, snapshot.data.configError)
+                : null,
+              providers.length === 0
+                ? h('div', { style: { opacity: 0.75, fontSize: 12 } }, 'Нет провайдеров в конфиге.')
+                : providers.map((provider) =>
+                    h(ProviderRow, { key: provider.id, provider, onRemove: removeProvider }),
+                  ),
+              h(
+                'div',
+                {
+                  style: {
+                    marginTop: 10,
+                    fontSize: 10,
+                    lineHeight: '14px',
+                    opacity: 0.6,
+                    wordBreak: 'break-all',
+                  },
+                },
+                `Обновлено ${updated}${snapshot.refreshing ? ' · обновляю…' : ''}`,
+                h('br'),
+                `Конфиг: ${data?.configPath ?? '—'}`,
+              ),
+              snapshot.formError ? h('div', { style: { color: BAD, fontSize: 11 } }, snapshot.formError) : null,
+            ),
         h(
           'div',
           { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 } },
-          h(
-            'button',
-            {
-              type: 'button',
-              onClick: () => void load(true),
-              disabled: snapshot.refreshing,
-              style: { padding: '4px 12px', borderRadius: 6, cursor: 'pointer' },
-            },
-            snapshot.refreshing ? 'Обновляю…' : 'Обновить',
-          ),
-          h(
-            'button',
-            { type: 'button', onClick: close, style: { padding: '4px 12px', borderRadius: 6, cursor: 'pointer' } },
-            'Закрыть',
-          ),
+          adding
+            ? h(
+                'button',
+                { type: 'button', onClick: () => setState({ view: 'details', formError: null }), style: buttonStyle },
+                'Назад',
+              )
+            : h(
+                'button',
+                {
+                  type: 'button',
+                  onClick: () => setState({ view: 'add', formError: null }),
+                  style: { ...buttonStyle, fontWeight: 600 },
+                },
+                '+ Добавить',
+              ),
+          adding
+            ? null
+            : h(
+                'button',
+                { type: 'button', onClick: () => void load(true), disabled: snapshot.refreshing, style: buttonStyle },
+                snapshot.refreshing ? 'Обновляю…' : 'Обновить',
+              ),
+          h('button', { type: 'button', onClick: close, style: buttonStyle }, 'Закрыть'),
         ),
       )
 
       const Modal = primitives?.Modal
       if (typeof Modal === 'function') {
-        return h(
-          Modal,
-          { open: true, onClose: close, title: 'Лимиты провайдеров', closeLabel: 'Закрыть' },
-          body,
-        )
+        return h(Modal, { open: true, onClose: close, title: 'Лимиты провайдеров', closeLabel: 'Закрыть' }, body)
       }
       // Fallback when the host component library is unavailable.
       return h(

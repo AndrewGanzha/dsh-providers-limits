@@ -10,12 +10,17 @@ import test from 'node:test'
 import {
   KNOWN_AUTH_PRESETS,
   PRESETS,
+  apply,
   loadConfig,
   loadProvider,
   mergeProvider,
   normalizeConfig,
+  presetCatalog,
   resolveAuth,
   starterConfig,
+  validateProvider,
+  withProvider,
+  withoutProvider,
 } from '../index.js'
 
 const opencodeGoBody = {
@@ -168,7 +173,7 @@ test('zai uses the raw authorization header and explains a missing plan', async 
       ok: true,
       status: 200,
       statusText: 'OK',
-      text: async () => JSON.stringify({ success: false, code: 500, msg: '当前用户不存在coding plan' }),
+      text: async () => JSON.stringify({ success: false, code: 500, msg: 'no coding plan' }),
     }
   }
   try {
@@ -203,4 +208,152 @@ test('loadProvider reports HTTP errors and missing keys', async () => {
   const missing = normalizeConfig({ providers: [{ id: 'opencode-go', preset: 'opencode-go', auth: { from: 'opencode', provider: 'absent' } }] }).providers[0]
   const missingResult = await loadProvider(missing, 5, {})
   assert.match(missingResult.error, /нет ключа/)
+})
+
+// ---------------------------------------------------------------------------
+// "Add provider" API
+// ---------------------------------------------------------------------------
+
+function installRoute() {
+  let route
+  apply({
+    effect: () => () => {},
+    connection: {
+      fetch: {
+        register: (value) => {
+          route = value
+          return async () => {}
+        },
+      },
+    },
+  })
+  assert.ok(route, 'route was not registered')
+  return route
+}
+
+function post(route, body) {
+  return route.fetch(
+    new Request('http://127.0.0.1/api/provider.limits', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+}
+
+test('validateProvider accepts a preset and rejects bad ids and duplicates', () => {
+  assert.equal(validateProvider({ id: 'my-go', preset: 'opencode-go' }, []).provider.id, 'my-go')
+  assert.match(validateProvider({ id: 'bad id' }, []).error, /id:/)
+  assert.match(validateProvider({ id: 'my-go', preset: 'opencode-go' }, ['my-go']).error, /уже добавлен/)
+  assert.match(validateProvider({ id: 'x', preset: 'nope' }, []).error, /неизвестный пресет/)
+  assert.match(validateProvider({ id: 'x', url: 'ftp://nope' }, []).error, /http/)
+  assert.match(validateProvider({ id: 'x', type: 'command' }, []).error, /command/)
+  assert.match(validateProvider({ id: 'x', url: 'https://e/x', auth: { from: 'env' } }, []).error, /auth\.name/)
+  assert.match(validateProvider({ id: 'x', url: 'https://e/x', windows: 'nope' }, []).error, /windows/)
+  assert.match(validateProvider(null, []).error, /объектом/)
+})
+
+test('withProvider / withoutProvider keep other config fields', () => {
+  const config = { timeoutSeconds: 7, providers: [{ id: 'a' }] }
+  const added = withProvider(config, { id: 'b' })
+  assert.equal(added.timeoutSeconds, 7)
+  assert.deepEqual(added.providers.map((provider) => provider.id), ['a', 'b'])
+  assert.deepEqual(withoutProvider(added, 'a').providers.map((provider) => provider.id), ['b'])
+})
+
+test('presetCatalog reports presets and key availability', () => {
+  const catalog = presetCatalog({})
+  assert.ok(catalog.length >= 5)
+  const opencodeGo = catalog.find((preset) => preset.id === 'opencode-go')
+  assert.equal(opencodeGo.label, 'OpenCode Go')
+  assert.equal(typeof opencodeGo.keyAvailable, 'boolean')
+  assert.equal(catalog.some((preset) => preset.id === 'custom'), false)
+})
+
+test('POST add writes the provider and GET lists it', async () => {
+  const dir = tempDir()
+  const previous = process.env.DSH_PROVIDER_LIMITS_CONFIG
+  process.env.DSH_PROVIDER_LIMITS_CONFIG = join(dir, 'provider-limits.json')
+  try {
+    writeFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, JSON.stringify({ providers: [] }), 'utf8')
+    const route = installRoute()
+
+    const added = await post(route, { action: 'add', provider: { id: 'my-go', preset: 'opencode-go' } })
+    assert.equal(added.status, 200)
+    const stored = JSON.parse(readFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, 'utf8'))
+    assert.deepEqual(stored.providers, [{ id: 'my-go', preset: 'opencode-go', enabled: true }])
+
+    const duplicate = await post(route, { action: 'add', provider: { id: 'my-go', preset: 'opencode-go' } })
+    assert.equal(duplicate.status, 400)
+
+    const get = await route.fetch(new Request('http://127.0.0.1/api/provider.limits'))
+    const payload = await get.json()
+    assert.ok(Array.isArray(payload.presets))
+    assert.equal(payload.presets.find((preset) => preset.id === 'opencode-go').configured, true)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROVIDER_LIMITS_CONFIG
+    else process.env.DSH_PROVIDER_LIMITS_CONFIG = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('POST remove deletes a provider and reports unknown ids', async () => {
+  const dir = tempDir()
+  const previous = process.env.DSH_PROVIDER_LIMITS_CONFIG
+  process.env.DSH_PROVIDER_LIMITS_CONFIG = join(dir, 'provider-limits.json')
+  try {
+    writeFileSync(
+      process.env.DSH_PROVIDER_LIMITS_CONFIG,
+      JSON.stringify({ providers: [{ id: 'a', preset: 'opencode-go' }, { id: 'b', preset: 'zai' }] }),
+      'utf8',
+    )
+    const route = installRoute()
+    const removed = await post(route, { action: 'remove', id: 'a' })
+    assert.equal(removed.status, 200)
+    const stored = JSON.parse(readFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, 'utf8'))
+    assert.deepEqual(stored.providers.map((provider) => provider.id), ['b'])
+
+    const missing = await post(route, { action: 'remove', id: 'zzz' })
+    assert.equal(missing.status, 404)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROVIDER_LIMITS_CONFIG
+    else process.env.DSH_PROVIDER_LIMITS_CONFIG = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('POST add rejects an unparsable config file', async () => {
+  const dir = tempDir()
+  const previous = process.env.DSH_PROVIDER_LIMITS_CONFIG
+  process.env.DSH_PROVIDER_LIMITS_CONFIG = join(dir, 'provider-limits.json')
+  try {
+    writeFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, '{ broken', 'utf8')
+    const route = installRoute()
+    const response = await post(route, { action: 'add', provider: { id: 'x', preset: 'opencode-go' } })
+    assert.equal(response.status, 409)
+    assert.equal(readFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, 'utf8'), '{ broken')
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROVIDER_LIMITS_CONFIG
+    else process.env.DSH_PROVIDER_LIMITS_CONFIG = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('POST rejects unknown actions and malformed bodies', async () => {
+  const dir = tempDir()
+  const previous = process.env.DSH_PROVIDER_LIMITS_CONFIG
+  process.env.DSH_PROVIDER_LIMITS_CONFIG = join(dir, 'provider-limits.json')
+  try {
+    writeFileSync(process.env.DSH_PROVIDER_LIMITS_CONFIG, JSON.stringify({ providers: [] }), 'utf8')
+    const route = installRoute()
+    assert.equal((await post(route, { action: 'nope' })).status, 400)
+    const bad = await route.fetch(
+      new Request('http://127.0.0.1/api/provider.limits', { method: 'POST', body: 'not json' }),
+    )
+    assert.equal(bad.status, 400)
+  } finally {
+    if (previous === undefined) delete process.env.DSH_PROVIDER_LIMITS_CONFIG
+    else process.env.DSH_PROVIDER_LIMITS_CONFIG = previous
+    rmSync(dir, { recursive: true, force: true })
+  }
 })

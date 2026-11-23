@@ -9,7 +9,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -18,6 +18,9 @@ export const inject = ['connection']
 
 export const ROUTE = '/api/provider.limits'
 const CACHE_MS = 20_000
+const MAX_PROVIDERS = 50
+const PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,63}$/i
+const AUTH_SOURCES = ['opencode', 'env', 'file', 'codex', 'literal']
 
 // ---------------------------------------------------------------------------
 // Presets
@@ -492,6 +495,147 @@ export async function loadProvider(provider, timeoutSeconds, auth) {
 }
 
 // ---------------------------------------------------------------------------
+// Config editing (used by the "add provider" button in the panel)
+// ---------------------------------------------------------------------------
+
+/** Presets offered by the add form, with whether their key is reachable now. */
+export function presetCatalog(auth = readAuth()) {
+  return Object.entries(PRESETS)
+    .filter(([id]) => id !== 'custom')
+    .map(([id, preset]) => {
+      const resolved = preset.auth ? resolveAuth(preset.auth, auth) : undefined
+      return {
+        id,
+        label: preset.label ?? id,
+        keyAvailable: Boolean(resolved?.token),
+        keySource: preset.auth ? describeAuth(preset.auth) : null,
+      }
+    })
+}
+
+/**
+ * Validate one provider entry coming from the UI.
+ * @returns `{ provider }` on success or `{ error }` with a user-facing message.
+ */
+export function validateProvider(entry, existingIds = []) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return { error: 'провайдер должен быть объектом' }
+
+  const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+  if (!PROVIDER_ID.test(id)) return { error: 'id: латиница, цифры, «.», «-», «_», 1–64 символа' }
+  if (existingIds.includes(id)) return { error: `провайдер «${id}» уже добавлен` }
+
+  const preset = entry.preset
+  if (preset !== undefined && !Object.hasOwn(PRESETS, preset)) return { error: `неизвестный пресет «${preset}»` }
+
+  const type = entry.type ?? PRESETS[preset]?.type ?? 'http'
+  if (type !== 'http' && type !== 'command') return { error: 'type: http или command' }
+
+  if (type === 'http') {
+    const url = typeof entry.url === 'string' ? entry.url : PRESETS[preset]?.url
+    if (!url) return { error: 'url обязателен' }
+    if (!/^https?:\/\//i.test(url)) return { error: 'url должен начинаться с http:// или https://' }
+  }
+  if (type === 'command' && !(typeof entry.command === 'string' && entry.command.trim().length > 0)) {
+    return { error: 'command обязателен для type=command' }
+  }
+
+  if (entry.auth !== undefined) {
+    const auth = entry.auth
+    if (!auth || typeof auth !== 'object' || Array.isArray(auth)) return { error: 'auth должен быть объектом' }
+    const from = auth.from ?? 'opencode'
+    if (!AUTH_SOURCES.includes(from)) return { error: `auth.from: ${AUTH_SOURCES.join(', ')}` }
+    if (from === 'env' && typeof auth.name !== 'string') return { error: 'auth.name обязателен для from=env' }
+    if (from === 'file' && typeof auth.path !== 'string') return { error: 'auth.path обязателен для from=file' }
+  }
+
+  if (entry.windows !== undefined) {
+    if (!Array.isArray(entry.windows)) return { error: 'windows должен быть массивом' }
+    for (const window of entry.windows) {
+      if (!window || typeof window !== 'object' || Array.isArray(window)) return { error: 'windows[i] должен быть объектом' }
+      if (window.percentPath === undefined && window.usedPath === undefined) {
+        return { error: 'windows[i]: нужен percentPath или usedPath' }
+      }
+    }
+  }
+  if (entry.headers !== undefined && (typeof entry.headers !== 'object' || entry.headers === null || Array.isArray(entry.headers))) {
+    return { error: 'headers должен быть объектом' }
+  }
+
+  const provider = { id }
+  for (const key of ['preset', 'label', 'type', 'url', 'method', 'command', 'authHeader', 'auto', 'windows', 'headers', 'auth']) {
+    if (entry[key] !== undefined) provider[key] = entry[key]
+  }
+  provider.enabled = entry.enabled !== false
+  return { provider }
+}
+
+export function withProvider(config, provider) {
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  return { ...config, providers: [...providers, provider] }
+}
+
+export function withoutProvider(config, id) {
+  const providers = Array.isArray(config.providers) ? config.providers : []
+  return { ...config, providers: providers.filter((provider) => provider?.id !== id) }
+}
+
+/** Write the config atomically so a crash cannot truncate the user's file. */
+export function saveConfig(file, config) {
+  const tmp = `${file}.${process.pid}.tmp`
+  writeFileSync(tmp, JSON.stringify(config, null, 2) + '\n', 'utf8')
+  renameSync(tmp, file)
+  cache = { at: 0, payload: undefined }
+  cacheKey = ''
+}
+
+async function handleConfigChange(request) {
+  let body
+  try {
+    body = await request.json()
+  } catch {
+    return jsonResponse({ error: 'некорректный JSON в запросе' }, 400)
+  }
+
+  const loaded = loadConfig()
+  if (loaded.error) return jsonResponse({ error: `${loaded.error}; исправьте файл вручную` }, 409)
+  const config = readJson(loaded.path) ?? { providers: [] }
+  const providers = Array.isArray(config.providers) ? config.providers : []
+
+  if (body?.action === 'add') {
+    if (providers.length >= MAX_PROVIDERS) return jsonResponse({ error: `максимум ${MAX_PROVIDERS} провайдеров` }, 400)
+    const checked = validateProvider(body.provider, providers.map((provider) => provider?.id))
+    if (checked.error) return jsonResponse({ error: checked.error }, 400)
+    try {
+      saveConfig(loaded.path, withProvider(config, checked.provider))
+    } catch (error) {
+      return jsonResponse({ error: `не удалось сохранить конфиг: ${error?.message ?? error}` }, 500)
+    }
+    return jsonResponse({ ok: true, added: checked.provider.id, configPath: loaded.path })
+  }
+
+  if (body?.action === 'remove') {
+    if (typeof body.id !== 'string' || !providers.some((provider) => provider?.id === body.id)) {
+      return jsonResponse({ error: 'провайдер не найден' }, 404)
+    }
+    try {
+      saveConfig(loaded.path, withoutProvider(config, body.id))
+    } catch (error) {
+      return jsonResponse({ error: `не удалось сохранить конфиг: ${error?.message ?? error}` }, 500)
+    }
+    return jsonResponse({ ok: true, removed: body.id, configPath: loaded.path })
+  }
+
+  return jsonResponse({ error: 'action: add или remove' }, 400)
+}
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+// ---------------------------------------------------------------------------
 // Collection with a small cache
 // ---------------------------------------------------------------------------
 
@@ -526,18 +670,19 @@ async function collect(force) {
 }
 
 async function handler(request) {
+  if (request.method === 'POST') return handleConfigChange(request)
   try {
     const url = new URL(request.url)
+    const loaded = loadConfig()
     const payload = await collect(url.searchParams.get('refresh') === '1')
-    return new Response(JSON.stringify(payload), {
-      status: 200,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+    const configured = new Set()
+    for (const provider of loaded.config.providers ?? []) configured.add(provider.preset ?? provider.id)
+    return jsonResponse({
+      ...payload,
+      presets: presetCatalog().map((preset) => ({ ...preset, configured: configured.has(preset.id) })),
     })
   } catch (error) {
-    return new Response(JSON.stringify({ error: String(error?.message ?? error) }), {
-      status: 500,
-      headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
-    })
+    return jsonResponse({ error: String(error?.message ?? error) }, 500)
   }
 }
 
@@ -549,7 +694,7 @@ export function apply(ctx) {
   }
   const dispose = connection.fetch.register({
     path: ROUTE,
-    methods: ['GET'],
+    methods: ['GET', 'POST'],
     requestBody: 'buffered',
     fetch: handler,
   })
