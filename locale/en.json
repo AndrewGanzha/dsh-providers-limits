@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Provider limits",
+    "description": "Shows the 5-hour, weekly, and monthly subscription limits of the providers you list, in the composer dock.",
+    "detail": "docs/DETAIL.md"
+  }
+}

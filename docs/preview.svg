@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="132" viewBox="0 0 720 132" role="img" aria-label="Provider limits in the composer dock">
+  <rect width="720" height="132" rx="14" fill="#111318"/>
+  <rect x="16" y="16" width="688" height="44" rx="10" fill="#1a1d24" stroke="#2b2f38"/>
+  <text x="34" y="44" fill="#9aa4b2" font-family="Segoe UI, system-ui, sans-serif" font-size="13">Ask anything…</text>
+  <g font-family="Segoe UI, system-ui, sans-serif" font-size="13">
+    <text x="196" y="96" fill="#9aa4b2">OpenCode Go</text>
+    <text x="300" y="96" fill="#22c55e">5h 2%</text>
+    <text x="348" y="96" fill="#22c55e">wk 1%</text>
+    <text x="396" y="96" fill="#22c55e">mo 0%</text>
+    <text x="470" y="96" fill="#9aa4b2">Z.AI GLM</text>
+    <text x="540" y="96" fill="#ef4444">✕</text>
+  </g>
+  <text x="34" y="120" fill="#6b7280" font-family="Segoe UI, system-ui, sans-serif" font-size="11">click the line to open details</text>
+</svg>
