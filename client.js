@@ -77,7 +77,14 @@ window.__ModuleLoader__.load({
 
     function barText(percent) {
       const filled = Math.round(Math.min(100, Math.max(0, percent ?? 0)) / 10)
-      return '█'.repeat(filled) + '░'.repeat(10 - filled)
+      return '▰'.repeat(filled) + '▱'.repeat(10 - filled)
+    }
+
+    /** Compact reset stamp: "23.11, 16:42". */
+    function formatReset(resetAt) {
+      const date = new Date(resetAt)
+      if (Number.isNaN(date.getTime())) return String(resetAt)
+      return date.toLocaleString([], { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
     }
 
     function countdown(resetAt) {
@@ -191,20 +198,38 @@ window.__ModuleLoader__.load({
     // Overlay: details
     // ---------------------------------------------------------------------
     function WindowRow({ window }) {
+      const color = colorFor(window)
       return h(
         'div',
-        { style: { display: 'flex', alignItems: 'center', gap: 10, padding: '4px 0' } },
-        h('span', { style: { minWidth: 34, opacity: 0.7, fontSize: 12 } }, window.label),
-        h('span', { style: { fontVariantNumeric: 'tabular-nums', color: colorFor(window), minWidth: 42, fontSize: 12 } }, percentText(window)),
-        h('span', { style: { color: colorFor(window), letterSpacing: -1, fontSize: 11 } }, barText(window.percent)),
+        { style: { padding: '3px 0' } },
+        h(
+          'div',
+          { style: { display: 'grid', gridTemplateColumns: '30px 44px 1fr', alignItems: 'center', gap: 8 } },
+          h('span', { style: { opacity: 0.65, fontSize: 11 } }, window.label),
+          h('span', { style: { color, fontSize: 12, fontVariantNumeric: 'tabular-nums' } }, percentText(window)),
+          h(
+            'span',
+            {
+              style: {
+                color,
+                fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+                fontSize: 11,
+                lineHeight: '12px',
+                letterSpacing: 0,
+                whiteSpace: 'nowrap',
+              },
+            },
+            barText(window.percent),
+          ),
+        ),
         window.status === 'rate-limited'
-          ? h('span', { style: { color: BAD, fontSize: 11 } }, 'исчерпан')
+          ? h('div', { style: { marginLeft: 82, color: BAD, fontSize: 10, marginTop: 1 } }, 'лимит исчерпан')
           : null,
         window.resetAt
           ? h(
-              'span',
-              { style: { marginLeft: 'auto', opacity: 0.7, fontSize: 11 } },
-              `сброс ${new Date(window.resetAt).toLocaleString()} · через ${countdown(window.resetAt)}`,
+              'div',
+              { style: { marginLeft: 82, opacity: 0.6, fontSize: 10, marginTop: 1 } },
+              `сброс ${formatReset(window.resetAt)} · через ${countdown(window.resetAt)}`,
             )
           : null,
       )
@@ -216,7 +241,7 @@ window.__ModuleLoader__.load({
           'div',
           { style: { padding: '6px 0', borderTop: '1px solid rgba(127,127,127,0.25)' } },
           h('div', { style: { color: BAD, fontSize: 12 } }, `${provider.label}: ошибка`),
-          h('div', { style: { opacity: 0.75, fontSize: 11, marginTop: 2 } }, provider.error),
+          h('div', { style: { opacity: 0.75, fontSize: 11, marginTop: 2, lineHeight: '15px' } }, provider.error),
         )
       }
       return h(
@@ -238,7 +263,17 @@ window.__ModuleLoader__.load({
 
       const body = h(
         'div',
-        { style: { display: 'flex', flexDirection: 'column', minWidth: 460 } },
+        {
+          style: {
+            display: 'flex',
+            flexDirection: 'column',
+            width: '100%',
+            maxWidth: 420,
+            minWidth: 260,
+            boxSizing: 'border-box',
+            gap: 2,
+          },
+        },
         snapshot.status === 'error'
           ? h('div', { style: { color: BAD, fontSize: 12 } }, `Не удалось получить лимиты: ${snapshot.error}`)
           : null,
@@ -250,12 +285,22 @@ window.__ModuleLoader__.load({
           : providers.map((provider) => h(ProviderRow, { key: provider.id, provider })),
         h(
           'div',
-          { style: { marginTop: 10, fontSize: 11, opacity: 0.65, wordBreak: 'break-all' } },
-          `Обновлено ${updated}${snapshot.refreshing ? ' · обновляю…' : ''} · конфиг: ${data?.configPath ?? '—'}`,
+          {
+            style: {
+              marginTop: 10,
+              fontSize: 10,
+              lineHeight: '14px',
+              opacity: 0.6,
+              wordBreak: 'break-all',
+            },
+          },
+          `Обновлено ${updated}${snapshot.refreshing ? ' · обновляю…' : ''}`,
+          h('br'),
+          `Конфиг: ${data?.configPath ?? '—'}`,
         ),
         h(
           'div',
-          { style: { display: 'flex', gap: 8, marginTop: 12 } },
+          { style: { display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 } },
           h(
             'button',
             {
@@ -307,9 +352,10 @@ window.__ModuleLoader__.load({
               border: '1px solid rgba(127,127,127,0.4)',
               borderRadius: 10,
               padding: 16,
-              maxWidth: '90vw',
+              width: 'min(420px, 92vw)',
               maxHeight: '80vh',
               overflow: 'auto',
+              boxSizing: 'border-box',
             },
           },
           h('div', { style: { fontSize: 13, fontWeight: 600, marginBottom: 6 } }, 'Лимиты провайдеров'),
