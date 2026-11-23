@@ -18,4 +18,4 @@ jobs:
           node --check index.js
           node --check client.js
       - name: Unit tests
-        run: node --test test/
+        run: node --test

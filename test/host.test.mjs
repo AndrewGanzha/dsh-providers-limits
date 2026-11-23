@@ -1,5 +1,5 @@
 // Host-half tests. No network: every HTTP call is stubbed.
-//   node --test test/          (CI)
+//   node --test          (CI)
 //   node test/host.test.mjs    (single file, no child processes)
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'

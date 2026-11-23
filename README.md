@@ -134,7 +134,7 @@ sees a provider key.
 ```bash
 node --check index.js
 node --check client.js
-node --test test/        # host + client unit tests, no network
+node --test              # host + client unit tests, no network
 node scripts/check.js    # live probe of the configured providers
 ```
 

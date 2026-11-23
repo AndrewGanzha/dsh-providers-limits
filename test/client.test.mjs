@@ -1,7 +1,7 @@
 // Client-half tests: load client.js through a fake ModuleLoader with a minimal
 // React shim, then check the module id and slot registrations.
 //
-//   node --test test/          (CI)
+//   node --test          (CI)
 //   node test/client.test.mjs  (single file)
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
